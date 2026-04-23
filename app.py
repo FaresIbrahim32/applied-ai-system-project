@@ -1,5 +1,10 @@
 import streamlit as st
 from datetime import datetime, date, time, timedelta
+from rag_engine import init_vectorstore, ask_rag
+
+
+
+
 
 from pawpal_system import (
     AdoptionStatus,
@@ -63,6 +68,10 @@ def provider_registry():
     return {}
 
 providers = provider_registry()
+
+
+
+vectorstore = init_vectorstore()
 
 # Role selector (no authentication for demo)
 role = st.sidebar.selectbox("Role", ["Owner", "Care Provider"])
@@ -772,3 +781,36 @@ else:
         st.success(f"All {len(plan.tasks)} tasks completed!")
     else:
         st.caption(f"✅ {completed}/{len(plan.tasks)} tasks completed  |  ⚠️ {conflicts} conflict(s)")
+
+st.divider()
+st.header("🐾 PawPal AI Assistant")
+
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
+
+user_input = st.text_input("Ask about vaccines, safety, or pet care:")
+
+col1, col2 = st.columns([1, 1])
+
+with col1:
+    ask_btn = st.button("Ask PawPal")
+
+with col2:
+    clear_btn = st.button("Clear Chat")
+
+if clear_btn:
+    st.session_state.chat_history = []
+
+if ask_btn and user_input:
+    with st.spinner("PawPal is thinking..."):
+        response = ask_rag(user_input, vectorstore)
+
+    st.session_state.chat_history.append(("You", user_input))
+    st.session_state.chat_history.append(("PawPal", response))
+
+# Display chat
+for role, msg in st.session_state.chat_history:
+    if role == "You":
+        st.markdown(f"**🧑 You:** {msg}")
+    else:
+        st.markdown(f"**🐾 PawPal:** {msg}")

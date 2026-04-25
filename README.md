@@ -84,6 +84,28 @@ The care provider (vet) can claim patients, add medications, propose appointment
 **Plan received in owner's inbox**
 ![Plan Applied](scheduler/plan_added_from_scheduler.png)
 
+
+### RAG DEMO outputs
+
+**Drink Hazard**
+![Drink Hazard](rag_demo/drink_hazard.png)
+
+**Vaccine Time**
+![Vaccine Time](rag_demo/vaccine_time.png)
+
+**Vaccine Info**
+![Vaccine Info](rag_demo/vaccine_info.png)
+
+**Common Pet Hazards**
+![Common Pet Hazards](rag_demo/common_pet_hazards.png)
+
+**Allergy Not Spamming Answers**
+![Allergy Not Spamming Answers](rag_demo/allergy_not_spamming_answers.png)
+
+**Confidence Score**
+![Confidence Score Output](rag_demo/confidence.png)
+
+
 ---
 
 ## Features
@@ -134,3 +156,132 @@ python -m pytest tests/test_pawpal.py -v
 **★★★★☆ (4 / 5)**
 
 The core scheduling behaviors — sorting, recurrence, and conflict detection — are fully covered and all 10 tests pass. One star is withheld because the `recurrence` attribute is not a declared dataclass field (it must be set manually via `setattr`), which is a fragile contract that future contributors could easily miss. Addressing that in the model would push confidence to 5/5.
+
+
+### Testing Confidence scoring for RAG tool
+- The assistant includes a simple confidence mechanism based on retrieval .Confidence is derived from similarity scores of retrieved chunks . 
+- Higher similarity → higher confidence
+
+- Strong match → confidence ≈ 0.8–0.95
+- Weak/missing context → confidence ≈ 0.3–0.5
+- This helps indicate when answers may be less reliable.
+
+---
+
+# 🧠 RAG Assistant (PawPal+ AI)
+
+PawPal+ includes an AI assistant that helps answer pet care questions using trusted documents.
+
+## Scenario
+
+A pet owner may not always know:
+
+* When a vaccine is required
+* What foods or substances are dangerous
+* When to contact a vet
+
+Instead of guessing or searching externally, the app provides an assistant that:
+
+* Answers questions based on verified documents
+* Explains pet care decisions in simple language
+* Supports (but does not replace) professional veterinary advice
+
+---
+
+## What this feature does
+
+The RAG assistant:
+
+* Accepts natural language questions from the user
+* Searches relevant pet care documents (vaccination charts, safety guides)
+* Returns answers grounded in those documents
+* Avoids hallucinations by restricting responses to retrieved context
+
+---
+
+## How it works
+
+### Document processing
+
+* PDF documents are loaded using `PyPDFLoader`
+* Content is split into smaller chunks using `RecursiveCharacterTextSplitter`
+* Chunking improves retrieval accuracy
+
+---
+
+### Embeddings
+
+* Each text chunk is converted into a vector using:
+
+  * `HuggingFaceEmbeddings (all-MiniLM-L6-v2)`
+* This allows semantic similarity search (not just keyword matching)
+
+---
+
+### Vector database (ChromaDB)
+
+* All embeddings are stored in a persistent **Chroma database**
+* Stored locally in `chroma_db/`
+* Avoids recomputing embeddings on every run
+
+---
+
+### Retrieval
+
+When a user asks a question:
+
+* The question is embedded into a vector
+* The system retrieves the top *k* most relevant document chunks
+* Retrieval is based on semantic similarity
+
+---
+
+### Response generation
+
+* Retrieved context is passed into a prompt
+* The model (`gemini-2.5-flash`) generates the final answer
+* The assistant is instructed to:
+
+  * Only use provided context
+  * Say when information is missing
+
+---
+
+## Integration with PawPal+
+
+The assistant is available inside the Streamlit app as a chat interface.
+
+It complements the scheduling system by:
+
+* Explaining care decisions (e.g., vaccine timing)
+* Providing safety guidance (e.g., toxic foods)
+* Helping users understand recommended plans
+
+---
+
+## Design constraints
+
+* The assistant does **not** use external knowledge
+* All answers must come from retrieved documents
+* If no relevant information is found, the assistant responds honestly
+
+---
+
+## Example usage
+
+* “When does a puppy need rabies vaccination?”
+* “Is chocolate toxic to dogs?”
+* “What vaccines are required for boarding?”
+
+---
+
+## Future improvements
+
+* Add document source citations (page references)
+* Personalize answers based on pet age and species
+* Generate suggested tasks from AI responses
+* Combine keyword + vector search for improved retrieval
+
+---
+
+

@@ -162,3 +162,51 @@ Maybe instead of streamlit , I would choose Vue or any other rich library that w
 
 - What is one important thing you learned about designing systems or working with AI on this project?
 Always link the markdown file under the agents dir when prompting so that the model knows how it should generate code properly
+
+
+# ⚖️ Responsible AI Reflection
+
+AI in PawPal+ is designed to be helpful but also transparent about its limits.
+
+## Limitations and biases
+
+* The system only knows what is in the provided documents
+* Missing or incomplete document coverage leads to incomplete answers
+* It does not account for individual pet conditions (breed, medical history)
+* Frequently mentioned topics may be overrepresented
+
+---
+
+## Potential misuse and safeguards
+
+The AI could be misused if treated as a replacement for veterinary advice.
+
+To reduce this risk:
+
+* It recommends consulting a licensed vet
+* It only answers using retrieved document context
+* It admits when information is not found instead of guessing
+
+---
+
+## Reliability insights
+
+* Performs well when relevant context exists
+* Struggles with vague or out-of-scope questions
+* Initially produced confident but weak answers; improved after enforcing strict context-only responses
+
+---
+
+## Collaboration with AI
+
+* **Helpful:** Suggested switching to Chroma for persistent embeddings, improving stability
+* **Flawed:** Recommended an unsupported embedding model, causing runtime errors and requiring manual fixes
+
+---
+
+## Summary
+
+* Reliable within document scope, but limited beyond it
+* Safeguards reduce hallucination and misuse
+* AI accelerated development but required validation
+

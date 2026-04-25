@@ -3,9 +3,6 @@ from datetime import datetime, date, time, timedelta
 from rag_engine import init_vectorstore, ask_rag
 
 
-
-
-
 from pawpal_system import (
     AdoptionStatus,
     CarePlan,
@@ -41,9 +38,7 @@ def safe_rerun():
     except Exception:
         pass
     try:
-        # internal API used by some Streamlit versions
         from streamlit.runtime.scriptrunner.script_runner import RerunException
-
         raise RerunException()
     except Exception:
         st.session_state._needs_refresh = True
@@ -54,8 +49,6 @@ def safe_rerun():
 # Session state bootstrap
 # ─────────────────────────────────────────────
 
-# In-memory registry (no disk). Survives page refreshes while the
-# Streamlit server process runs. Lost on server restart.
 @st.cache_resource
 def owner_registry():
     return {}
@@ -70,13 +63,11 @@ def provider_registry():
 providers = provider_registry()
 
 
-
 vectorstore = init_vectorstore()
 
-# Role selector (no authentication for demo)
-role = st.sidebar.selectbox("Role", ["Owner", "Care Provider"])
+# FIX 5: renamed from `role` to `selected_role` to avoid shadowing the chat loop variable
+selected_role = st.sidebar.selectbox("Role", ["Owner", "Care Provider"])
 
-# Fixed keys for demo sessions (no auth)
 OWNER_KEY = "owner1"
 PROVIDER_KEY = "provider1"
 
@@ -89,11 +80,9 @@ if "owner" not in st.session_state:
         )
         schedule.add_slot(day, slot)
 
-    # Try to load a previously saved owner from in-memory registry
     loaded = registry.get(OWNER_KEY)
     if loaded:
         st.session_state.owner = loaded
-        # restore an active plan reference (use first plan if present)
         if loaded.care_plans:
             st.session_state.plan = loaded.care_plans[0]
         else:
@@ -102,7 +91,6 @@ if "owner" not in st.session_state:
             st.session_state.plan = plan
         st.session_state.task_counter = getattr(st.session_state, "task_counter", 0)
     else:
-        # create a fresh owner and save it
         st.session_state.owner = PetOwner(
             username=OWNER_KEY,
             password="",
@@ -115,15 +103,12 @@ if "owner" not in st.session_state:
         st.session_state.task_counter = 0
         registry[OWNER_KEY] = st.session_state.owner
 
-# Sync session owner from registry so updates made by providers are reflected
 reg_owner = registry.get(OWNER_KEY)
 if reg_owner:
     st.session_state.owner = reg_owner
-    # ensure we have an active plan reference
     if reg_owner.care_plans:
         st.session_state.plan = reg_owner.care_plans[0]
 
-# Initialize a simple provider session object so UI can reference it
 if "provider" not in st.session_state:
     loaded_p = providers.get(PROVIDER_KEY)
     if loaded_p:
@@ -137,7 +122,6 @@ if "provider" not in st.session_state:
         st.session_state.provider = default_provider
         providers[PROVIDER_KEY] = default_provider
 
-# Sync provider session from registry
 reg_provider = providers.get(PROVIDER_KEY)
 if reg_provider:
     st.session_state.provider = reg_provider
@@ -154,8 +138,6 @@ def detect_conflicts_lightweight(tasks):
         List[str]: warning messages
     """
     warnings = []
-
-    # Sort tasks by time
     sorted_tasks = sorted(tasks, key=lambda t: t.scheduled_time)
 
     for i in range(len(sorted_tasks) - 1):
@@ -168,16 +150,13 @@ def detect_conflicts_lightweight(tasks):
                 f"{t2.task_type.value} both at "
                 f"{t1.scheduled_time.strftime('%I:%M %p')}"
             )
-
             warnings.append(msg)
-
-            # mark BOTH as conflicted
             t1.conflicted = True
             t2.conflicted = True
 
     return warnings
 
-# Handlers for UI actions
+
 def handle_add_pet(owner: PetOwner, name: str, species: str, cat: str, age: int, status: str):
     new_pet = Pet(
         name=name,
@@ -194,13 +173,11 @@ def handle_add_pet(owner: PetOwner, name: str, species: str, cat: str, age: int,
 def handle_add_task(owner: PetOwner, plan: CarePlan, task_type_val: str, task_time_val, pet_likes_val: bool, notes_val: str):
     proposed_time = datetime.combine(date.today(), task_time_val)
 
-    # CHECK 1: Overlap with existing tasks in the current plan
     for existing_task in plan.tasks:
         if existing_task.scheduled_time == proposed_time:
             st.error(f"🚫 Cannot add task: '{existing_task.task_type.value}' is already scheduled at {task_time_val.strftime('%I:%M %p')}.")
-            return # Exit early
+            return
 
-    # Create temporary task to check availability
     st.session_state.task_counter += 1
     new_task = Task(
         task_id=f"t{st.session_state.task_counter}",
@@ -210,19 +187,15 @@ def handle_add_task(owner: PetOwner, plan: CarePlan, task_type_val: str, task_ti
         notes=notes_val,
     )
 
-    # CHECK 2: Owner availability (uses your backend logic)
     if new_task.check_conflict(owner):
         st.error(f"🚫 Cannot add task: Owner is unavailable at {task_time_val.strftime('%I:%M %p')} according to their schedule.")
-        # Reset counter since we didn't use the ID
-        st.session_state.task_counter -= 1 
-        return # Exit early
+        st.session_state.task_counter -= 1
+        return
 
-    # If both checks pass, add to the system
     owner.add_task(plan.plan_id, new_task)
     registry[owner.username] = owner
     st.success(f"Task '{task_type_val}' added successfully.")
-    # No rerun needed here if you want to see the success message, 
-    # but usually safe_rerun() is good to refresh the list.
+
 
 def provider_add_task_to_owner(provider: CareProvider, owner_username: str, plan_id: str,
                                task_type_val: str, task_time_val, pet_likes_val: bool, notes_val: str):
@@ -233,17 +206,14 @@ def provider_add_task_to_owner(provider: CareProvider, owner_username: str, plan
 
     proposed_time = datetime.combine(date.today(), task_time_val)
 
-    # 1. Find the specific plan
     target_plan = next((p for p in target_owner.care_plans if p.plan_id == plan_id), None)
-    
-    # 2. Check for time overlaps in that plan
+
     if target_plan:
         for t in target_plan.tasks:
             if t.scheduled_time == proposed_time:
                 st.error(f"🚫 Conflict: A task already exists at {task_time_val.strftime('%I:%M %p')}. Task rejected.")
                 return
 
-    # 3. Create task and check Owner availability
     new_task = Task(
         task_id=f"prov_{provider.username}_{len(target_owner.care_plans)+1}",
         task_type=TaskType(task_type_val),
@@ -256,7 +226,6 @@ def provider_add_task_to_owner(provider: CareProvider, owner_username: str, plan
         st.error("🚫 Conflict: Owner schedule does not allow for a task at this time.")
         return
 
-    # 4. Success: Commit to registry
     target_owner.add_task(plan_id, new_task)
     registry[target_owner.username] = target_owner
     providers[provider.username] = provider
@@ -275,7 +244,6 @@ def provider_claim_patient(provider: CareProvider, owner_username: str, pet_name
         st.error("Pet not found on owner.")
         return
     provider.add_patient(pet)
-    # persist changes
     providers[provider.username] = provider
     st.session_state.provider = provider
     registry[owner_obj.username] = owner_obj
@@ -285,7 +253,6 @@ def provider_claim_patient(provider: CareProvider, owner_username: str, pet_name
 
 def provider_add_task_to_pet(provider: CareProvider, pet: Pet, plan_id: str,
                             task_type_val: str, task_time_val, pet_likes_val: bool, notes_val: str):
-    # ensure provider is assigned to this pet
     if pet not in provider.patients:
         st.error("You are not assigned to this pet.")
         return
@@ -294,7 +261,6 @@ def provider_add_task_to_pet(provider: CareProvider, pet: Pet, plan_id: str,
         st.error("Pet has no owner recorded.")
         return
     provider_add_task_to_owner(provider, owner_obj.username, plan_id, task_type_val, task_time_val, pet_likes_val, notes_val)
-    # ensure owner registry kept up to date and provider persisted
     registry[owner_obj.username] = owner_obj
     providers[provider.username] = provider
     st.session_state.provider = provider
@@ -308,7 +274,6 @@ def provider_add_med_to_pet(provider: CareProvider, pet: Pet, med_name: str, dos
     med = Medication(name=med_name, dosage=dosage, frequency=frequency,
                      start_date=date.today(), end_date=date.today()+timedelta(days=30))
     provider.add_medication(pet, med)
-    # persist
     registry[pet.owner.username] = pet.owner
     providers[provider.username] = provider
     st.session_state.provider = provider
@@ -326,7 +291,6 @@ def provider_add_medication(provider: CareProvider, owner_username: str, pet_nam
     if not pet:
         st.error("Pet not found for owner.")
         return
-    # create medication with a default start/end for demo
     med = Medication(name=med_name, dosage=dosage, frequency=frequency,
                      start_date=date.today(), end_date=date.today()+timedelta(days=30))
     provider.add_medication(pet, med)
@@ -342,7 +306,7 @@ def provider_add_medication(provider: CareProvider, owner_username: str, pet_nam
 
 st.sidebar.title("PawPal+")
 st.sidebar.header("Add a Pet")
-# Owner profile: name and allergies
+
 st.sidebar.markdown("---")
 owner_name_in = st.sidebar.text_input("Owner name", value=st.session_state.owner.name)
 if owner_name_in != st.session_state.owner.name:
@@ -391,8 +355,8 @@ def owner_add_appointment(owner: PetOwner, pet_name: str, appointment: Appointme
 st.title("🐾 PawPal+ — Today's Schedule")
 st.caption(f"📅 {date.today().strftime('%A, %B %d %Y')}")
 
-# Owner: show recommended plans inbox
-if role == "Owner":
+# FIX 5: all role checks now use `selected_role` instead of `role`
+if selected_role == "Owner":
     st.header("Recommended Plans Inbox")
     if owner.recommended_plans:
         for rp in owner.recommended_plans:
@@ -406,10 +370,8 @@ if role == "Owner":
                         line += f" — notes: {t.notes}"
                     st.write(line)
             if st.button("Apply plan to my care plans", key=f"apply_{rp.plan_id}"):
-                # convert RecommendedPlan to CarePlan and add
                 new_cp = CarePlan(plan_id=rp.plan_id, plan_date=rp.plan_date, tasks=rp.tasks.copy())
                 owner.add_care_plan(new_cp)
-                # set newly applied plan as active
                 st.session_state.plan = new_cp
                 owner.recommended_plans = [p for p in owner.recommended_plans if p.plan_id != rp.plan_id]
                 registry[owner.username] = owner
@@ -418,7 +380,6 @@ if role == "Owner":
     else:
         st.info("No recommended plans yet.")
 
-    # Owner: show pet medications (read from registry to reflect provider updates)
     st.header("Pet Medications")
     owner_obj = registry.get(owner.username, owner)
     for p in owner_obj.pets:
@@ -430,7 +391,6 @@ if role == "Owner":
             for m in meds:
                 st.write(f"- {m.name}: {m.dosage}, {m.frequency} ({m.start_date.isoformat()} → {m.end_date.isoformat()})")
 
-    # Owner: upcoming appointments
     st.header("Upcoming Appointments")
     for p in owner.pets:
         st.subheader(p.name)
@@ -454,7 +414,6 @@ if role == "Owner":
                     st.success("Appointment shifted by +1 day (demo modify).")
                     safe_rerun()
 
-    # Owner: add an appointment (next provider visit)
     st.header("Schedule a Visit / Appointment")
     pet_choices = [p.name for p in owner.pets]
     if pet_choices:
@@ -479,14 +438,12 @@ if role == "Owner":
         st.info("Add a pet first to schedule visits.")
 
 
-# If the user selected care provider role, show provider console
-if role == "Care Provider":
+if selected_role == "Care Provider":
     st.header("Care Provider Console")
     st.caption(f"👩‍⚕️ Provider: {provider.display_name} ({provider.username})")
 
-    # Provider should only act on their assigned patients
     patients = provider.patients
-    # Provider: upcoming scheduled appointments for provider's patients
+
     st.subheader("Upcoming Appointments For My Patients")
     any_sched = False
     for pet in patients:
@@ -513,6 +470,7 @@ if role == "Care Provider":
                     safe_rerun()
     if not any_sched:
         st.write("No scheduled appointments for your patients.")
+
     if not patients:
         st.info("You have no assigned patients. Claim one below.")
         owner_usernames = list(registry.keys())
@@ -529,7 +487,6 @@ if role == "Care Provider":
         else:
             st.info("No owners registered yet — ask an owner to sign up first.")
     else:
-        # show provider's patients
         pet_labels = [f"{p.name} (owner: {p.owner.name if p.owner else 'unknown'})" for p in patients]
         sel_idx = st.selectbox("Select patient", list(range(len(patients))), format_func=lambda i: pet_labels[i])
         sel_pet = patients[sel_idx]
@@ -565,7 +522,6 @@ if role == "Care Provider":
             clinic_species = st.multiselect("Species treated", [s.value for s in SpeciesCategory])
             add_clinic_btn = st.form_submit_button("Add Clinic")
         if add_clinic_btn:
-            # create CareClinic and attach to provider
             clinic = CareClinic(clinic_id=clinic_id or f"clinic-{len(provider.affiliated_clinics)+1}",
                                 name=clinic_name or "Unnamed Clinic",
                                 address=clinic_address or "",
@@ -573,7 +529,6 @@ if role == "Care Provider":
             provider.add_clinic(clinic)
             st.success(f"Clinic '{clinic.name}' added to provider.")
 
-        # Provider: propose an appointment for the selected pet
         st.subheader("Propose Appointment")
         with st.form("provider_propose_appt_form"):
             pa_date = st.date_input("Date", value=date.today())
@@ -585,7 +540,6 @@ if role == "Care Provider":
         if propose_appt:
             appt = Appointment(appointment_id=f"prov_a{len(sel_pet.appointments)+1}", date_time=datetime.combine(pa_date, pa_time), location=pa_loc, appointment_type=AppointmentType(pa_type), notes=pa_notes)
             ok = provider.add_appointment(sel_pet, appt, sel_pet.owner)
-            # persist
             registry[sel_pet.owner.username] = sel_pet.owner
             providers[provider.username] = provider
             if not ok or appt.status == AppointmentStatus.CANCELLED:
@@ -600,14 +554,11 @@ if role == "Care Provider":
                 cats = ", ".join([cat.value for cat in c.species_treated])
                 st.write(f"- {c.name} ({c.clinic_id}) — {cats}")
 
-        # Provider: create and send a recommended plan (multi-task draft)
         st.subheader("Create Recommended Plan Draft")
 
-        # Initialize draft storage
         if "rp_draft_tasks" not in st.session_state:
             st.session_state.rp_draft_tasks = []
 
-        # Add a task to the draft
         with st.form("rp_add_task_form"):
             draft_task_type = st.selectbox("Task type", [t.value for t in TaskType])
             draft_task_time = st.time_input("Time", value=time(8, 0))
@@ -626,7 +577,6 @@ if role == "Care Provider":
             st.success("Task added to draft")
             safe_rerun()
 
-        # Show current draft tasks with remove buttons
         if st.session_state.rp_draft_tasks:
             st.markdown("**Draft tasks:**")
             for i, dt in enumerate(list(st.session_state.rp_draft_tasks)):
@@ -638,22 +588,18 @@ if role == "Care Provider":
                     providers[provider.username] = provider
                     safe_rerun()
 
-        # Create and send the recommended plan (includes all draft tasks)
         with st.form("provider_create_plan_form"):
             plan_id_in = st.text_input("Plan ID", value=f"rp-{sel_pet.name}-{date.today().isoformat()}")
             plan_date_in = st.date_input("Plan date", value=date.today())
             create_plan = st.form_submit_button("Create Recommended Plan")
         if create_plan:
             plan = provider.create_recommended_plan(plan_id=plan_id_in, plan_date=plan_date_in, pet=sel_pet, owner=sel_pet.owner)
-            # add all draft tasks
             for idx, dt in enumerate(list(st.session_state.rp_draft_tasks)):
                 try:
                     t = Task(task_id=f"rp_task_{idx+1}", task_type=TaskType(dt["task_type"]), scheduled_time=datetime.combine(plan_date_in, dt["time"]), pet_likes=dt.get("pet_likes", True), notes=dt.get("notes", ""))
                     plan.add_task(t)
                 except Exception:
-                    # skip invalid entries
                     continue
-            # persist and clear draft
             registry[sel_pet.owner.username] = sel_pet.owner
             providers[provider.username] = provider
             st.session_state.rp_draft_tasks = []
@@ -661,9 +607,11 @@ if role == "Care Provider":
             safe_rerun()
 
     st.divider()
-
-    # Hide owner-facing schedule when in provider mode
     st.stop()
+
+# ─────────────────────────────────────────────
+# Owner schedule view (only reached when role == "Owner")
+# ─────────────────────────────────────────────
 
 pet_names = [p.name for p in owner.pets]
 if pet_names:
@@ -706,17 +654,14 @@ TASK_ICONS = {
     TaskType.OTHER:      "📌",
 }
 
-# Sort tasks chronologically using the same key as the Scheduler
 sorted_tasks = sorted(plan.tasks, key=lambda t: t.scheduled_time)
 
 if not sorted_tasks:
     st.info("No tasks yet — add one above.")
 else:
-    # ── 1. Refresh owner-availability conflict flags ───────────────────────
     for task in sorted_tasks:
         task.check_conflict(owner)
 
-    # ── 2. Detect same-time duplicate conflicts ────────────────────────────
     conflict_warnings = detect_conflicts_lightweight(sorted_tasks)
     if conflict_warnings:
         for msg in conflict_warnings:
@@ -724,7 +669,6 @@ else:
     else:
         st.success("No scheduling conflicts detected.")
 
-    # ── 3. Summary table ──────────────────────────────────────────────────
     import pandas as pd
     table_rows = []
     for task in sorted_tasks:
@@ -741,7 +685,6 @@ else:
 
     st.divider()
 
-    # ── 4. Detailed interactive task rows ─────────────────────────────────
     for idx, task in enumerate(sorted_tasks):
         icon  = TASK_ICONS.get(task.task_type, "📌")
         tstr  = task.scheduled_time.strftime("%I:%M %p")
@@ -774,7 +717,6 @@ else:
                     st.rerun()
             st.divider()
 
-    # ── 5. Progress summary ───────────────────────────────────────────────
     completed = sum(1 for t in plan.tasks if t.completed)
     conflicts = sum(1 for t in plan.tasks if t.conflicted)
     if completed == len(plan.tasks):
@@ -791,10 +733,8 @@ if "chat_history" not in st.session_state:
 user_input = st.text_input("Ask about vaccines, safety, or pet care:")
 
 col1, col2 = st.columns([1, 1])
-
 with col1:
     ask_btn = st.button("Ask PawPal")
-
 with col2:
     clear_btn = st.button("Clear Chat")
 
@@ -803,14 +743,20 @@ if clear_btn:
 
 if ask_btn and user_input:
     with st.spinner("PawPal is thinking..."):
-        response = ask_rag(user_input, vectorstore)
+        result = ask_rag(user_input, vectorstore)
+        response = result["answer"]
+        confidence = result["confidence"]
 
-    st.session_state.chat_history.append(("You", user_input))
-    st.session_state.chat_history.append(("PawPal", response))
+    st.session_state.chat_history.append(("You", user_input, None))
+    # FIX 4: store confidence alongside the assistant message
+    st.session_state.chat_history.append(("PawPal", response, confidence))
 
-# Display chat
-for role, msg in st.session_state.chat_history:
-    if role == "You":
+# FIX 4 + FIX 5: renamed loop variable from `role` to `sender`;
+# each message now renders its own stored data instead of outer-scope variables
+for entry in st.session_state.chat_history:
+    sender, msg, conf = entry
+    if sender == "You":
         st.markdown(f"**🧑 You:** {msg}")
     else:
         st.markdown(f"**🐾 PawPal:** {msg}")
+        st.caption(f"Confidence: {conf}")

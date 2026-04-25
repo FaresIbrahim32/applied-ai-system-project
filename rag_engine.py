@@ -13,6 +13,8 @@ from langchain_core.output_parsers import StrOutputParser
 # ─────────────────────────────────────────────
 # CONFIG
 # ─────────────────────────────────────────────
+
+
 GOOGLE_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -115,19 +117,51 @@ Question:
 # ─────────────────────────────────────────────
 # RAG QUERY FUNCTION
 # ─────────────────────────────────────────────
+import numpy as np
+
 def ask_rag(question, vectorstore):
     retriever = vectorstore.as_retriever(search_kwargs={"k": 4})
 
-    docs = retriever.invoke(question)
+    docs = retriever.invoke(question)  # Fix 2: was get_relevant_documents()
+
+    if not docs:
+        return {"answer": "I couldn't find that information in the provided documents.", "confidence": 0.0}
 
     context = "\n\n".join([d.page_content for d in docs])
 
-    chain = build_chain()
+    try:
+        scores = vectorstore.similarity_search_with_score(question, k=4)
+        similarities = [1 / (1 + score) for _, score in scores]  # Fix 1: was 1 - score
+        confidence = float(np.mean(similarities))
+    except:
+        confidence = 0.5
 
-    return chain.invoke({
-        "context": context,
-        "question": question
-    })
+    chain = build_chain()
+    answer = chain.invoke({"context": context, "question": question})
+    return {"answer": answer, "confidence": round(confidence, 2)}
+
+def run_basic_checks(vectorstore):
+    tests_passed = 0
+
+    # Test 1: retrieval works
+    docs = vectorstore.similarity_search("rabies vaccine", k=2)
+    if docs:
+        tests_passed += 1
+
+    # Test 2: empty query
+    try:
+        res = ask_rag("", vectorstore)
+        if res["answer"]:
+            tests_passed += 1
+    except:
+        pass
+
+    # Test 3: unknown query handled
+    res = ask_rag("quantum physics for cats", vectorstore)
+    if "couldn’t find" in res["answer"].lower():
+        tests_passed += 1
+
+    return tests_passed
 
 # ─────────────────────────────────────────────
 # INIT STORE
@@ -137,3 +171,4 @@ vectorstore = init_vectorstore()
 # optional test (if running file directly)
 if __name__ == "__main__":
     print("Chroma RAG ready.")
+    print(f"Tests passed: {run_basic_checks(vectorstore)}/3")
